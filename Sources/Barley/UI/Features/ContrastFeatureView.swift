@@ -20,6 +20,7 @@ struct ContrastFeatureView: View {
 
             colorInputs
             swatchPreview
+            textPreview
             actions
 
             if let errorMessage {
@@ -35,6 +36,12 @@ struct ContrastFeatureView: View {
             Spacer(minLength: 0)
         }
         .onAppear {
+            evaluateContrast()
+        }
+        .onChange(of: foregroundHex) { _ in
+            evaluateContrast()
+        }
+        .onChange(of: backgroundHex) { _ in
             evaluateContrast()
         }
     }
@@ -80,20 +87,39 @@ struct ContrastFeatureView: View {
 
     private var actions: some View {
         HStack {
-            Button("Check Contrast") {
-                evaluateContrast()
-            }
-            .buttonStyle(.borderedProminent)
-
             Button("Swap") {
                 let previousForeground = foregroundHex
                 foregroundHex = backgroundHex
                 backgroundHex = previousForeground
-                evaluateContrast()
             }
             .buttonStyle(.bordered)
 
             Spacer()
+        }
+    }
+
+    private var textPreview: some View {
+        let foreground = Color(hex: foregroundHex) ?? .primary
+        let background = Color(hex: backgroundHex) ?? .clear
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Text Preview")
+                .font(.callout.weight(.medium))
+
+            Text("Barley is awesome")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(foreground)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 16)
+                .padding(.horizontal, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(background)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                )
         }
     }
 
@@ -192,7 +218,6 @@ struct ContrastFeatureView: View {
                     return
                 }
                 foregroundHex = hex
-                evaluateContrast()
             }
         )
     }
@@ -205,7 +230,6 @@ struct ContrastFeatureView: View {
                     return
                 }
                 backgroundHex = hex
-                evaluateContrast()
             }
         )
     }
