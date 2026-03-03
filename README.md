@@ -3,6 +3,8 @@
 Barley is a native macOS utility app for day-to-day developer tasks.  
 It runs as a real app window and also exposes a menu bar item for fast feature selection.
 
+![Barley app screenshot](docs/images/barley-app-screenshot.png)
+
 ## Current Features
 
 - JWT Decoder
