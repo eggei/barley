@@ -41,6 +41,54 @@ swift run
 
 Or open `Package.swift` in Xcode and run the `Barley` scheme.
 
+## Installing the `barley` Command
+
+Build a release binary and link it onto your `PATH` so you can launch Barley from any terminal with `barley`:
+
+```bash
+swift build -c release
+sudo ln -sf "$(pwd)/.build/release/Barley" /usr/local/bin/barley
+```
+
+Now `barley` opens the app window from anywhere.
+
+## Auto-Launch at Startup (launchd)
+
+To have Barley start automatically when you log in, register it as a launchd agent:
+
+1. Create `~/Library/LaunchAgents/com.eggei.barley.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.eggei.barley</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/barley</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+```
+
+2. Load it:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.eggei.barley.plist
+```
+
+To stop auto-launching, unload and remove it:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.eggei.barley.plist
+rm ~/Library/LaunchAgents/com.eggei.barley.plist
+```
+
 ## License
 
 No license file is currently included. Add one before public reuse/distribution.
