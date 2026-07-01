@@ -1,8 +1,9 @@
 # Barley
 
-Barley is a native macOS utility app for day-to-day developer tasks.  
-It runs as a real app window and also exposes a menu bar item for fast feature selection.
+Barley is an offline native macOS utility app for day-to-day developer tasks.
+It runs as a real app window and also exposes a menu bar item for fast feature selection. Your data stays in you computer for JWT decoding, WCAG contrast checking, and video-to-GIF conversion.
 
+![Barley Screen Recording](docs/images/screen-recording.gif)
 ![Barley app screenshot](docs/images/barley-app-screenshot.png)
 
 ## Current Features
@@ -70,6 +71,7 @@ Tests/BarleyTests/
 3. Command line tools installed (`xcode-select --install`)
 
 Optional:
+
 - `ffmpeg` via Homebrew for the default Video-to-GIF engine
 
 ## Start Developing
