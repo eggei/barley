@@ -16,7 +16,8 @@ It runs as a real app window and also exposes a menu bar item for fast feature s
   - Reports AA/AAA results for common WCAG criteria
 - Video to GIF
   - Convert `.mov`/`.mp4` to GIF locally
-  - Select FPS, output scale, and engine (`Auto`, `Native`, `ffmpeg`)
+  - Select FPS and output scale
+  - Uses `ffmpeg` by default for consistent output, with native fallback
   - Keeps a recent output list with per-file `Reveal in Finder`
 
 ## App Behavior
@@ -69,7 +70,7 @@ Tests/BarleyTests/
 3. Command line tools installed (`xcode-select --install`)
 
 Optional:
-- `ffmpeg` via Homebrew for Video-to-GIF fallback engine
+- `ffmpeg` via Homebrew for the default Video-to-GIF engine
 
 ## Start Developing
 

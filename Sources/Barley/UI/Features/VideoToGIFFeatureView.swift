@@ -35,12 +35,12 @@ struct VideoToGIFFeatureView: View {
     @State private var saveDirectoryPath: String = defaultSaveDirectoryPath()
     @State private var selectedFPS: FPSOption = .twelve
     @State private var selectedScale: ScaleOption = .px1200
-    @State private var selectedEngine: VideoToGIFEnginePreference = .auto
     @State private var recentOutputURLs: [URL] = []
     @State private var statusMessage: String?
     @State private var errorMessage: String?
     @State private var ffmpegInstalled: Bool = VideoToGIFConverter.ffmpegExecutableURL() != nil
     @State private var isConverting = false
+    @State private var conversionTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -157,36 +157,23 @@ struct VideoToGIFFeatureView: View {
                 .frame(width: 190)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Engine")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Picker("Engine", selection: $selectedEngine) {
-                    ForEach(VideoToGIFEnginePreference.allCases) { engine in
-                        Text(engine.title).tag(engine)
-                    }
-                }
-                .frame(width: 210)
-            }
-
             Spacer()
         }
     }
 
     private var privacyAndFFmpegNote: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("All conversions are local. Installing ffmpeg only adds a command-line tool on your Mac. Barley does not upload your videos.")
+            Text("All conversions are local. Barley uses ffmpeg by default for the most consistent output and falls back to native conversion when needed.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
             if ffmpegInstalled {
-                Label("ffmpeg is installed and available for fallback.", systemImage: "checkmark.circle.fill")
+                Label("ffmpeg is installed and used by default.", systemImage: "checkmark.circle.fill")
                     .font(.footnote)
                     .foregroundStyle(.green)
             } else {
                 HStack(spacing: 8) {
-                    Label("ffmpeg is not installed.", systemImage: "exclamationmark.triangle.fill")
+                    Label("ffmpeg is not installed. Native conversion will be used.", systemImage: "exclamationmark.triangle.fill")
                         .font(.footnote)
                         .foregroundStyle(.orange)
 
@@ -211,6 +198,13 @@ struct VideoToGIFFeatureView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(isConverting || selectedVideoURL == nil)
+
+            if isConverting {
+                Button("Cancel conversion") {
+                    cancelConversion()
+                }
+                .buttonStyle(.bordered)
+            }
 
             Spacer()
         }
@@ -293,11 +287,6 @@ struct VideoToGIFFeatureView: View {
             return
         }
 
-        if selectedEngine == .ffmpeg, !ffmpegInstalled {
-            errorMessage = "ffmpeg is not installed yet. Use the Install button or switch engine to Auto/Native."
-            return
-        }
-
         isConverting = true
         statusMessage = nil
         errorMessage = nil
@@ -307,13 +296,12 @@ struct VideoToGIFFeatureView: View {
             maxDimension: selectedScale.rawValue
         )
 
-        Task {
+        let task = Task {
             do {
                 let result = try await VideoToGIFConverter.convert(
                     videoURL: selectedVideoURL,
                     saveDirectory: saveURL,
-                    settings: settings,
-                    preference: selectedEngine
+                    settings: settings
                 )
 
                 await MainActor.run {
@@ -322,7 +310,16 @@ struct VideoToGIFFeatureView: View {
                     statusMessage = "Saved \(result.outputURL.lastPathComponent) using \(result.engineUsed.title)."
                     errorMessage = nil
                     ffmpegInstalled = VideoToGIFConverter.ffmpegExecutableURL() != nil
+                    conversionTask = nil
                     resetAfterSuccessfulConversion()
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    isConverting = false
+                    statusMessage = "Conversion cancelled."
+                    errorMessage = nil
+                    ffmpegInstalled = VideoToGIFConverter.ffmpegExecutableURL() != nil
+                    conversionTask = nil
                 }
             } catch {
                 await MainActor.run {
@@ -330,9 +327,20 @@ struct VideoToGIFFeatureView: View {
                     statusMessage = nil
                     errorMessage = error.localizedDescription
                     ffmpegInstalled = VideoToGIFConverter.ffmpegExecutableURL() != nil
+                    conversionTask = nil
                 }
             }
         }
+        conversionTask = task
+    }
+
+    private func cancelConversion() {
+        guard isConverting else {
+            return
+        }
+        statusMessage = "Cancelling conversion..."
+        errorMessage = nil
+        conversionTask?.cancel()
     }
 
     private func revealInFinder(url: URL) {
@@ -385,7 +393,6 @@ struct VideoToGIFFeatureView: View {
         selectedVideoURL = nil
         selectedFPS = .twelve
         selectedScale = .px1200
-        selectedEngine = .auto
     }
 
     private func loadRecentOutputs() {

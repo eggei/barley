@@ -1,27 +1,9 @@
 import AVFoundation
 import CoreGraphics
+import Darwin
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
-
-enum VideoToGIFEnginePreference: String, CaseIterable, Identifiable {
-    case auto
-    case native
-    case ffmpeg
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .auto:
-            return "Auto (native first)"
-        case .native:
-            return "Native (AVFoundation)"
-        case .ffmpeg:
-            return "ffmpeg"
-        }
-    }
-}
 
 enum VideoToGIFEngineUsed {
     case native
@@ -58,7 +40,7 @@ enum GIFConversionError: LocalizedError {
     case unableToFinalize
     case ffmpegNotInstalled
     case ffmpegFailed(details: String)
-    case nativeThenFFmpegFailed(native: Error, ffmpeg: Error)
+    case ffmpegThenNativeFailed(ffmpeg: Error, native: Error)
 
     var errorDescription: String? {
         switch self {
@@ -82,8 +64,8 @@ enum GIFConversionError: LocalizedError {
             return "ffmpeg is not installed. Use the install button to add it via Homebrew."
         case .ffmpegFailed(let details):
             return "ffmpeg conversion failed. \(details)"
-        case .nativeThenFFmpegFailed(let native, let ffmpeg):
-            return "Native conversion failed (\(native.localizedDescription)). ffmpeg fallback also failed (\(ffmpeg.localizedDescription))."
+        case .ffmpegThenNativeFailed(let ffmpeg, let native):
+            return "ffmpeg conversion failed (\(ffmpeg.localizedDescription)). Native fallback also failed (\(native.localizedDescription))."
         }
     }
 }
@@ -92,8 +74,7 @@ enum VideoToGIFConverter {
     static func convert(
         videoURL: URL,
         saveDirectory: URL,
-        settings: GIFConversionSettings,
-        preference: VideoToGIFEnginePreference
+        settings: GIFConversionSettings
     ) async throws -> GIFConversionResult {
         guard settings.fps > 0 else {
             throw GIFConversionError.invalidFPS
@@ -105,24 +86,23 @@ enum VideoToGIFConverter {
 
         let outputURL = suggestedOutputURL(for: videoURL, in: saveDirectory)
 
-        switch preference {
-        case .native:
-            try await convertNative(videoURL: videoURL, outputURL: outputURL, settings: settings)
-            return GIFConversionResult(outputURL: outputURL, engineUsed: .native)
-        case .ffmpeg:
-            try convertFFmpeg(videoURL: videoURL, outputURL: outputURL, settings: settings)
+        do {
+            try await convertFFmpeg(videoURL: videoURL, outputURL: outputURL, settings: settings)
             return GIFConversionResult(outputURL: outputURL, engineUsed: .ffmpeg)
-        case .auto:
+        } catch let ffmpegError {
+            try? FileManager.default.removeItem(at: outputURL)
+            if ffmpegError is CancellationError {
+                throw CancellationError()
+            }
             do {
                 try await convertNative(videoURL: videoURL, outputURL: outputURL, settings: settings)
                 return GIFConversionResult(outputURL: outputURL, engineUsed: .native)
             } catch let nativeError {
-                do {
-                    try convertFFmpeg(videoURL: videoURL, outputURL: outputURL, settings: settings)
-                    return GIFConversionResult(outputURL: outputURL, engineUsed: .ffmpeg)
-                } catch let ffmpegError {
-                    throw GIFConversionError.nativeThenFFmpegFailed(native: nativeError, ffmpeg: ffmpegError)
+                try? FileManager.default.removeItem(at: outputURL)
+                if nativeError is CancellationError {
+                    throw CancellationError()
                 }
+                throw GIFConversionError.ffmpegThenNativeFailed(ffmpeg: ffmpegError, native: nativeError)
             }
         }
     }
@@ -216,7 +196,9 @@ enum VideoToGIFConverter {
         let sourceSize = CGSize(width: abs(oriented.width), height: abs(oriented.height))
 
         let targetSize = scaledSize(from: sourceSize, maxDimension: settings.maxDimension)
-        let delay = 1.0 / Double(settings.fps)
+        let frameDelay = 1.0 / Double(settings.fps)
+        // GIF delay resolution is centiseconds, so include both delay keys for broad player compatibility.
+        let quantizedDelay = max(0.01, (frameDelay * 100).rounded() / 100)
 
         let frameCount = max(1, Int((durationSeconds * Double(settings.fps)).rounded(.down)))
         let safeDuration = max(0, durationSeconds - 0.001)
@@ -239,14 +221,18 @@ enum VideoToGIFConverter {
 
         let frameProperties: [CFString: Any] = [
             kCGImagePropertyGIFDictionary: [
-                kCGImagePropertyGIFDelayTime: delay
+                kCGImagePropertyGIFUnclampedDelayTime: frameDelay,
+                kCGImagePropertyGIFDelayTime: quantizedDelay
             ]
         ]
 
         let imageGenerator = AVAssetImageGenerator(asset: asset)
         imageGenerator.appliesPreferredTrackTransform = true
+        imageGenerator.requestedTimeToleranceBefore = .zero
+        imageGenerator.requestedTimeToleranceAfter = .zero
 
         for frameIndex in 0..<frameCount {
+            try Task.checkCancellation()
             let frameTimeSeconds = min(safeDuration, Double(frameIndex) / Double(settings.fps))
             let frameTime = CMTime(seconds: frameTimeSeconds, preferredTimescale: 600)
 
@@ -266,7 +252,7 @@ enum VideoToGIFConverter {
         }
     }
 
-    private static func convertFFmpeg(videoURL: URL, outputURL: URL, settings: GIFConversionSettings) throws {
+    private static func convertFFmpeg(videoURL: URL, outputURL: URL, settings: GIFConversionSettings) async throws {
         guard let ffmpegURL = ffmpegExecutableURL() else {
             throw GIFConversionError.ffmpegNotInstalled
         }
@@ -285,13 +271,44 @@ enum VideoToGIFConverter {
         process.standardError = errorPipe
 
         try process.run()
-        process.waitUntilExit()
+        do {
+            while process.isRunning {
+                try Task.checkCancellation()
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+        } catch is CancellationError {
+            forceTerminate(process)
+            throw CancellationError()
+        } catch {
+            forceTerminate(process)
+            throw error
+        }
 
         guard process.terminationStatus == 0 else {
             let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
             let details = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown ffmpeg error"
             throw GIFConversionError.ffmpegFailed(details: details)
+        }
+    }
+
+    private static func forceTerminate(_ process: Process) {
+        guard process.isRunning else {
+            return
+        }
+
+        process.terminate()
+
+        for _ in 0..<10 where process.isRunning {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+
+        if process.isRunning {
+            _ = kill(process.processIdentifier, SIGKILL)
+        }
+
+        if process.isRunning {
+            process.waitUntilExit()
         }
     }
 
